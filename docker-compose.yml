@@ -4,7 +4,9 @@ services:
     build: ./WorkAssistAI
     ports:
       - "8000:8000"
-      
+    env_file:
+      - ./WorkAssistAI/.env
+
   frontend:
     build: ./career-compass-ai-main
     ports:

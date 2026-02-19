@@ -32,7 +32,7 @@ const UploadPage = () => {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("poste_vise", poste);
-      const res = await fetch("https://elevora-k1ve.onrender.com/analyze_cv", {
+      const res = await fetch("http://localhost:8000/analyze_cv", {
         method: "POST",
         body: formData,
       });
