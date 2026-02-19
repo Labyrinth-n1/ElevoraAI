@@ -20,7 +20,9 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://elevora-ai-two.vercel.app"],
+    allow_origins=[
+        "https://elevora-ai-two.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
