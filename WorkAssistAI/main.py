@@ -1,4 +1,6 @@
+# ==============================
 # Bibliothèques
+# ==============================
 
 import os
 import json
@@ -6,15 +8,25 @@ import uvicorn
 import pdfplumber
 from dotenv import load_dotenv
 import google.generativeai as genai
-from fastapi import FastAPI, UploadFile, Form
+from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from google.api_core.exceptions import ResourceExhausted  
+from google.api_core.exceptions import ResourceExhausted
 
 
-# Variables d'environnements 
+# ==============================
+# Variables d'environnement
+# ==============================
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    print("⚠️ WARNING: GEMINI_API_KEY is not set!")
+
+
+# ==============================
+# FastAPI App
+# ==============================
 
 app = FastAPI()
 
@@ -29,38 +41,50 @@ app.add_middleware(
 )
 
 
-def extract_text_from_pdf(pdf_path):
-    with pdfplumber.open(pdf_path) as pdf:
-        text = ""
-        for page in pdf.pages:
-            text += page.extract_text()
-    return text
+# ==============================
+# Utils
+# ==============================
+
+def extract_text_from_pdf(file):
+    """Extract text safely from PDF"""
+    text = ""
+    try:
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
+        return text.strip()
+    except Exception as e:
+        print("PDF ERROR:", e)
+        return ""
 
 
 def get_fallback_json():
-    """Return mock data when API quota is exceeded"""
+    """Return mock data when API quota is exceeded or error occurs"""
     return {
         "name": "Candidat - Mode Hors-ligne",
-        "summary": "La quota API Gemini a été dépassée. Réessayez plus tard ou passez au plan payant.",
-        "contacts": {"email": "example@email.com", "phone": [], "birth_date": ""},
-        "skills": [
-            {"name": "JavaScript", "description": "Développement frontend"},
-            {"name": "Python", "description": "Développement backend"}
-        ],
-        "experience": [
-            {"title": "Développeur", "company": "Exemple Inc", "duration": "2023-2024", "description": "Exemple"}
-        ],
-        "languages": ["Français", "Anglais"],
+        "summary": "Le service IA est temporairement indisponible. Réessayez plus tard.",
+        "contacts": {"email": "", "phone": [], "birth_date": ""},
+        "skills": [],
+        "experience": [],
+        "languages": [],
         "score_match": 0,
         "missing_skills": [],
-        "recommendations": ["Réessayez après 24h"],
+        "recommendations": ["Veuillez réessayer dans quelques minutes."],
         "qcm_cards": []
     }
 
 
+# ==============================
+# Gemini Processing
+# ==============================
+
 def cv_to_json(content, poste_vise):
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    if not GEMINI_API_KEY:
+        print("❌ API KEY missing")
+        return get_fallback_json()
 
     prompt = f"""
       SYSTEM:
@@ -121,26 +145,61 @@ def cv_to_json(content, poste_vise):
       - Priorise la clarté et la précision.
       """ 
 
-    response = model.generate_content(prompt)
-    txt = response.text.replace("```json", "").replace("```", "").strip()
-
     try:
-        return json.loads(txt)
-    except ResourceExhausted as e:
-        print(f"API Quota exceeded: {str(e)[:100]}")
-        return get_fallback_json()
-    except json.JSONDecodeError as e:
-        return {"error": "Invalid JSON from API", "exception": str(e)}
-    except Exception as e:
-        print(f"Error: {e}")
-        return {"error": str(e)}
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel("gemini-3-flash-preview")
 
+        response = model.generate_content(prompt)
+
+        if not response or not response.text:
+            print("⚠️ Empty Gemini response")
+            return get_fallback_json()
+
+        txt = response.text.replace("```json", "").replace("```", "").strip()
+
+        return json.loads(txt)
+
+    except ResourceExhausted:
+        print("⚠️ Gemini quota exceeded")
+        return get_fallback_json()
+
+    except json.JSONDecodeError as e:
+        print("⚠️ Invalid JSON from Gemini:", e)
+        return get_fallback_json()
+
+    except Exception as e:
+        print("⚠️ Gemini ERROR:", e)
+        return get_fallback_json()
+
+
+# ==============================
+# Endpoint
+# ==============================
 
 @app.post("/analyze_cv")
 def analyze_cv(file: UploadFile, poste_vise: str = Form(...)):
-    content = extract_text_from_pdf(file.file)
-    return cv_to_json(content, poste_vise)
 
+    try:
+        content = extract_text_from_pdf(file.file)
+
+        if not content:
+            raise HTTPException(status_code=400, detail="PDF vide ou non lisible")
+
+        result = cv_to_json(content, poste_vise)
+
+        return result
+
+    except HTTPException as e:
+        raise e
+
+    except Exception as e:
+        print("ANALYZE ERROR:", e)
+        return get_fallback_json()
+
+
+# ==============================
+# Run local
+# ==============================
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
